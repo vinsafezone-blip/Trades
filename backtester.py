@@ -15,8 +15,8 @@ def main():
     # 1. Read Configuration
     config = configparser.ConfigParser()
     try:
-        if not config.read('config.ini'):
-            logging.error("Could not read config.ini. Please make sure the file exists.")
+        if not config.read('config_backtest.ini'):
+            logging.error("Could not read config_backtest.ini. Please make sure the file exists.")
             sys.exit(1)
 
         # KITE credentials

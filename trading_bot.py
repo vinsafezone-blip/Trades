@@ -2,7 +2,7 @@
 # 1. Install the required library:
 #    pip install kiteconnect
 #
-# 2. Open the `config.ini` file and fill in your details:
+# 2. Open `config_live.ini` and fill in your details:
 #    - [KITE]: `api_key` and `access_token`
 #    - [TRADING]: `instrument_name`, `strike_price`, `option_type`, and other trading parameters.
 #
@@ -27,8 +27,8 @@ def main():
     # Read configuration
     config = configparser.ConfigParser()
     try:
-        if not config.read('config.ini'):
-            logging.error("Could not read config.ini. Please make sure the file exists.")
+        if not config.read('config_live.ini'):
+            logging.error("Could not read config_live.ini. Please make sure the file exists.")
             sys.exit(1)
 
         api_key = config.get('KITE', 'api_key')
