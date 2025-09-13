@@ -2,14 +2,12 @@
 # 1. Install the required library:
 #    pip install kiteconnect
 #
-# 2. Open the `config.ini` file and fill in your `api_key` and `access_token`
-#    under the [KITE] section. You can also adjust the trading parameters
-#    under the [TRADING] section.
+# 2. Open the `config.ini` file and fill in your details:
+#    - [KITE]: `api_key` and `access_token`
+#    - [TRADING]: `instrument_name`, `strike_price`, `option_type`, and other trading parameters.
 #
 # 3. Run the script from your terminal:
 #    python trading_bot.py
-#
-# 4. The script will prompt you to enter the Nifty 50 strike price and option type (CE/PE).
 
 import logging
 from kiteconnect import KiteConnect, KiteTicker
@@ -37,10 +35,16 @@ def main():
         access_token = config.get('KITE', 'access_token')
 
         # Trading parameters
+        instrument_name = config.get('TRADING', 'instrument_name')
+        strike_price = config.getint('TRADING', 'strike_price')
+        option_type = config.get('TRADING', 'option_type').upper()
         alert_price = config.getfloat('TRADING', 'alert_price')
         entry_price_target = config.getfloat('TRADING', 'entry_price')
         stop_loss_price = config.getfloat('TRADING', 'stop_loss_price')
         target_price = config.getfloat('TRADING', 'target_price')
+
+        if option_type not in ["CE", "PE"]:
+            raise ValueError("Invalid option_type in config.ini. Must be CE or PE.")
 
     except (KeyError, configparser.NoSectionError, ValueError) as e:
         logging.error(f"Error reading config.ini: {e}. Make sure [KITE] and [TRADING] sections are correctly set up with valid numbers.")
@@ -55,25 +59,14 @@ def main():
         logging.error(f"Authentication failed: {e}")
         sys.exit(1)
 
-    # Get user input for strike price
-    try:
-        strike_price_input = input("Enter the Nifty 50 strike price (e.g., 22500): ")
-        strike_price = int(strike_price_input)
-        option_type = input("Enter option type (CE or PE): ").upper()
-        if option_type not in ["CE", "PE"]:
-            raise ValueError("Invalid option type. Please enter CE or PE.")
-    except ValueError as e:
-        logging.error(f"Invalid input: {e}")
-        sys.exit(1)
+    logging.info(f"Looking for {instrument_name} {strike_price} {option_type}...")
 
-    logging.info(f"Looking for Nifty 50 {strike_price} {option_type}...")
-
-    # Find the instrument token for the Nifty 50 option
+    # Find the instrument token for the specified option
     instrument_token = None
     try:
         instruments = kite.instruments("NFO")
         for instrument in instruments:
-            if (instrument['name'] == 'NIFTY' and
+            if (instrument['name'] == instrument_name and
                 instrument['strike'] == strike_price and
                 instrument['instrument_type'] == option_type and
                 instrument['segment'] == 'NFO-OPT'):
