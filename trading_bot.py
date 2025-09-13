@@ -2,7 +2,9 @@
 # 1. Install the required library:
 #    pip install kiteconnect
 #
-# 2. Fill in your `api_key` and `access_token` in the "User Configuration" section below.
+# 2. Open the `config.ini` file and fill in your `api_key` and `access_token`
+#    under the [KITE] section. You can also adjust the trading parameters
+#    under the [TRADING] section.
 #
 # 3. Run the script from your terminal:
 #    python trading_bot.py
@@ -12,25 +14,9 @@
 import logging
 from kiteconnect import KiteConnect, KiteTicker
 import sys
+import configparser
 
-# --- User Configuration ---
-# 1. Login to kite.zerodha.com and generate a request_token.
-# 2. Use the following script to generate an access_token:
-#    (This needs to be done once a day)
-#
-# from kiteconnect import KiteConnect
-#
-# api_key = "YOUR_API_KEY"
-# api_secret = "YOUR_API_SECRET"
-# request_token = "YOUR_REQUEST_TOKEN"
-#
-# kite = KiteConnect(api_key=api_key)
-# data = kite.generate_session(request_token, api_secret=api_secret)
-#
-# print(f"access_token = '{data['access_token']}'")
-
-api_key = "YOUR_API_KEY"
-access_token = "YOUR_ACCESS_TOKEN"
+# --- Configuration is now in config.ini ---
 
 # --- Main Trading Logic ---
 
@@ -39,6 +25,26 @@ def main():
     Main function to run the trading bot.
     """
     logging.basicConfig(level=logging.INFO)
+
+    # Read configuration
+    config = configparser.ConfigParser()
+    try:
+        if not config.read('config.ini'):
+            logging.error("Could not read config.ini. Please make sure the file exists.")
+            sys.exit(1)
+
+        api_key = config.get('KITE', 'api_key')
+        access_token = config.get('KITE', 'access_token')
+
+        # Trading parameters
+        alert_price = config.getfloat('TRADING', 'alert_price')
+        entry_price_target = config.getfloat('TRADING', 'entry_price')
+        stop_loss_price = config.getfloat('TRADING', 'stop_loss_price')
+        target_price = config.getfloat('TRADING', 'target_price')
+
+    except (KeyError, configparser.NoSectionError, ValueError) as e:
+        logging.error(f"Error reading config.ini: {e}. Make sure [KITE] and [TRADING] sections are correctly set up with valid numbers.")
+        sys.exit(1)
 
     # Initialize KiteConnect
     try:
@@ -107,25 +113,26 @@ def main():
                 ltp = tick['last_price']
                 logging.info(f"LTP for {instrument['tradingsymbol']}: {ltp}")
 
-                # Alert at 95
-                if 94.5 <= ltp <= 95.5 and not alert_triggered:
-                    logging.info("Price is around 95! Playing alert.")
+                # Alert
+                # We check if the price is within 0.5 of the alert price
+                if (alert_price - 0.5) <= ltp <= (alert_price + 0.5) and not alert_triggered:
+                    logging.info(f"Price is around {alert_price}! Playing alert.")
                     play_alert()
                     alert_triggered = True
 
-                # Entry at 100
-                if ltp >= 100 and entry_price is None:
-                    entry_price = 100
+                # Entry
+                if ltp >= entry_price_target and entry_price is None:
+                    entry_price = entry_price_target
                     logging.info(f"--- ENTRY TRIGGERED at {entry_price} ---")
 
                 # Stop-loss and Target
                 if entry_price is not None:
-                    # Stop-loss at 96
-                    if ltp <= 96:
+                    # Stop-loss
+                    if ltp <= stop_loss_price:
                         logging.warning(f"--- STOP-LOSS HIT at {ltp} ---")
                         ws.close()
-                    # Target at 109
-                    elif ltp >= 109:
+                    # Target
+                    elif ltp >= target_price:
                         logging.info(f"--- TARGET REACHED at {ltp} ---")
                         ws.close()
 
