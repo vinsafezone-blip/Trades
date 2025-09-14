@@ -15,6 +15,7 @@ from backtester import run_backtest
 import datetime as dt
 from pydub import AudioSegment
 from pydub.playback import play
+from config_editor import ConfigEditor
 
 class TradingApp(tk.Tk):
     def __init__(self):
@@ -28,6 +29,14 @@ class TradingApp(tk.Tk):
         self.instrument_token = None
         self.first_candle = None
 
+    def open_config_editor(self):
+        config_editor = ConfigEditor(self)
+        config_editor.grab_set() # Make the window modal
+        self.wait_window(config_editor) # Wait until the editor is closed
+        self.config = self.load_config() # Reload the config
+        self.sl_var.set(self.config.get('DEFAULT', 'SL', fallback='20'))
+        self.target_var.set(self.config.get('DEFAULT', 'TARGET', fallback='50'))
+
     def load_config(self):
         config = configparser.ConfigParser()
         config_path = os.path.join(os.path.dirname(__file__), 'config.ini')
@@ -36,6 +45,13 @@ class TradingApp(tk.Tk):
         return config
 
     def create_widgets(self):
+        # Top frame for settings button
+        top_frame = ttk.Frame(self)
+        top_frame.pack(fill="x", padx=10, pady=5)
+
+        settings_button = ttk.Button(top_frame, text="Settings", command=self.open_config_editor)
+        settings_button.pack(side="right")
+
         # Create a notebook (tabbed interface)
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(expand=True, fill="both")
