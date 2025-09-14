@@ -15,6 +15,8 @@ from trading_logic import (
 import datetime as dt
 from config_editor import ConfigEditor
 from ui import MainUI
+from trade_logger import log_trade
+from datetime import datetime
 
 class TradingApp(tk.Tk):
     def __init__(self):
@@ -110,7 +112,7 @@ class TradingApp(tk.Tk):
         self.monitor_breakout()
 
     def monitor_breakout(self):
-        if self.active_trade: return # Stop monitoring for breakout if a trade is active
+        if self.active_trade: return
         try:
             ltp_data = self.kite.ltp([self.instrument_token])
             ltp = ltp_data[str(self.instrument_token)]['last_price']
@@ -146,17 +148,27 @@ class TradingApp(tk.Tk):
                 trade_instrument = contracts['ce']
                 sl_price = self.first_candle['high'] - sl_points
                 target_price = self.first_candle['high'] + target_points
+                transaction_type = "BUY CE"
             else:
                 trade_instrument = contracts['pe']
                 sl_price = self.first_candle['low'] + sl_points
                 target_price = self.first_candle['low'] - target_points
+                transaction_type = "BUY PE"
+
+            # Get the entry price of the option
+            option_ltp_data = self.kite.ltp([trade_instrument['instrument_token']])
+            entry_price = option_ltp_data[str(trade_instrument['instrument_token'])]['last_price']
 
             order_id = place_order(self.kite, trade_instrument['tradingsymbol'], trade_instrument['exchange'], 'BUY', quantity_lots * 15)
             if order_id:
                 self.active_trade = {
                     'instrument': trade_instrument,
-                    'sl_price': sl_price,
-                    'target_price': target_price,
+                    'transaction_type': transaction_type,
+                    'quantity': quantity_lots * 15,
+                    'entry_price': entry_price,
+                    'entry_time': datetime.now().strftime('%H:%M:%S'),
+                    'sl_price_index': sl_price,
+                    'target_price_index': target_price,
                     'order_id': order_id
                 }
                 self.status_var.set(f"Trade placed for {trade_instrument['tradingsymbol']}. Monitoring SL/Target.")
@@ -171,20 +183,41 @@ class TradingApp(tk.Tk):
     def monitor_trade(self):
         if not self.active_trade: return
         try:
-            ltp_data = self.kite.ltp([self.instrument_token])
-            ltp = ltp_data[str(self.instrument_token)]['last_price']
-            self.status_var.set(f"Monitoring trade... Index LTP: {ltp}, SL: {self.active_trade['sl_price']}, Target: {self.active_trade['target_price']}")
+            index_ltp_data = self.kite.ltp([self.instrument_token])
+            index_ltp = index_ltp_data[str(self.instrument_token)]['last_price']
+
+            self.status_var.set(f"Monitoring trade... Index LTP: {index_ltp}, SL: {self.active_trade['sl_price_index']}, Target: {self.active_trade['target_price_index']}")
 
             exit_trade = False
             trade_instrument_type = self.active_trade['instrument']['instrument_type']
             if trade_instrument_type == 'CE':
-                if ltp <= self.active_trade['sl_price'] or ltp >= self.active_trade['target_price']: exit_trade = True
+                if index_ltp <= self.active_trade['sl_price_index'] or index_ltp >= self.active_trade['target_price_index']: exit_trade = True
             elif trade_instrument_type == 'PE':
-                if ltp >= self.active_trade['sl_price'] or ltp <= self.active_trade['target_price']: exit_trade = True
+                if index_ltp >= self.active_trade['sl_price_index'] or index_ltp <= self.active_trade['target_price_index']: exit_trade = True
 
             if exit_trade:
                 self.status_var.set("SL/Target hit! Exiting trade.")
-                place_order(self.kite, self.active_trade['instrument']['tradingsymbol'], self.active_trade['instrument']['exchange'], 'SELL', int(self.quantity_var.get()) * 15)
+                # Get option exit price for logging
+                option_ltp_data = self.kite.ltp([self.active_trade['instrument']['instrument_token']])
+                exit_price = option_ltp_data[str(self.active_trade['instrument']['instrument_token'])]['last_price']
+
+                # Place exit order
+                place_order(self.kite, self.active_trade['instrument']['tradingsymbol'], self.active_trade['instrument']['exchange'], 'SELL', self.active_trade['quantity'])
+
+                # Log the trade
+                pnl = (exit_price - self.active_trade['entry_price']) * self.active_trade['quantity']
+                trade_details = {
+                    'instrument': self.active_trade['instrument']['tradingsymbol'],
+                    'transaction_type': self.active_trade['transaction_type'],
+                    'quantity': self.active_trade['quantity'],
+                    'entry_time': self.active_trade['entry_time'],
+                    'entry_price': self.active_trade['entry_price'],
+                    'exit_time': datetime.now().strftime('%H:%M:%S'),
+                    'exit_price': exit_price,
+                    'pnl': pnl
+                }
+                log_trade(trade_details)
+
                 self.stop_trading()
             else:
                 self.after(5000, self.monitor_trade)
