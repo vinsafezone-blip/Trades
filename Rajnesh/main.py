@@ -12,6 +12,7 @@ from trading_logic import (
     get_atm_option_contracts,
     place_order,
 )
+from backtester import run_backtest
 import datetime as dt
 from config_editor import ConfigEditor
 from ui import MainUI
@@ -22,7 +23,7 @@ class TradingApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Nifty Bank Options Trading")
-        self.geometry("400x300")
+        self.geometry("600x400")
 
         self.config = self.load_config()
 
@@ -39,6 +40,10 @@ class TradingApp(tk.Tk):
         self.atm_strike_var = tk.StringVar(value="N/A")
         self.status_var = tk.StringVar(value="Ready")
 
+        default_days = self.config.getint('BACKTESTER', 'DEFAULT_DAYS', fallback=30)
+        self.start_date_var = tk.StringVar(value=(dt.date.today() - dt.timedelta(days=default_days)).strftime('%Y-%m-%d'))
+        self.end_date_var = tk.StringVar(value=dt.date.today().strftime('%Y-%m-%d'))
+
         # Create the UI
         self.ui = MainUI(self, self.get_callbacks(), self.get_app_vars())
 
@@ -47,7 +52,9 @@ class TradingApp(tk.Tk):
             'open_config_editor': self.open_config_editor,
             'start_trading': self.start_trading,
             'stop_trading': self.stop_trading,
-            'set_buttons': self.set_buttons
+            'set_buttons': self.set_buttons,
+            'run_backtest_gui': self.run_backtest_gui,
+            'set_backtest_widgets': self.set_backtest_widgets,
         }
 
     def get_app_vars(self):
@@ -56,12 +63,18 @@ class TradingApp(tk.Tk):
             'target_var': self.target_var,
             'quantity_var': self.quantity_var,
             'atm_strike_var': self.atm_strike_var,
-            'status_var': self.status_var
+            'status_var': self.status_var,
+            'start_date_var': self.start_date_var,
+            'end_date_var': self.end_date_var,
         }
 
     def set_buttons(self, start_button, stop_button):
         self.start_button = start_button
         self.stop_button = stop_button
+
+    def set_backtest_widgets(self, summary_text, trades_tree):
+        self.summary_text = summary_text
+        self.trades_tree = trades_tree
 
     def open_config_editor(self):
         config_editor = ConfigEditor(self)
@@ -155,10 +168,8 @@ class TradingApp(tk.Tk):
                 target_price = self.first_candle['low'] - target_points
                 transaction_type = "BUY PE"
 
-            # Get the entry price of the option
             option_ltp_data = self.kite.ltp([trade_instrument['instrument_token']])
             entry_price = option_ltp_data[str(trade_instrument['instrument_token'])]['last_price']
-
             order_id = place_order(self.kite, trade_instrument['tradingsymbol'], trade_instrument['exchange'], 'BUY', quantity_lots * 15)
             if order_id:
                 self.active_trade = {
@@ -185,7 +196,6 @@ class TradingApp(tk.Tk):
         try:
             index_ltp_data = self.kite.ltp([self.instrument_token])
             index_ltp = index_ltp_data[str(self.instrument_token)]['last_price']
-
             self.status_var.set(f"Monitoring trade... Index LTP: {index_ltp}, SL: {self.active_trade['sl_price_index']}, Target: {self.active_trade['target_price_index']}")
 
             exit_trade = False
@@ -197,14 +207,9 @@ class TradingApp(tk.Tk):
 
             if exit_trade:
                 self.status_var.set("SL/Target hit! Exiting trade.")
-                # Get option exit price for logging
                 option_ltp_data = self.kite.ltp([self.active_trade['instrument']['instrument_token']])
                 exit_price = option_ltp_data[str(self.active_trade['instrument']['instrument_token'])]['last_price']
-
-                # Place exit order
                 place_order(self.kite, self.active_trade['instrument']['tradingsymbol'], self.active_trade['instrument']['exchange'], 'SELL', self.active_trade['quantity'])
-
-                # Log the trade
                 pnl = (exit_price - self.active_trade['entry_price']) * self.active_trade['quantity']
                 trade_details = {
                     'instrument': self.active_trade['instrument']['tradingsymbol'],
@@ -217,7 +222,6 @@ class TradingApp(tk.Tk):
                     'pnl': pnl
                 }
                 log_trade(trade_details)
-
                 self.stop_trading()
             else:
                 self.after(5000, self.monitor_trade)
@@ -230,6 +234,50 @@ class TradingApp(tk.Tk):
         self.start_button.config(state="normal")
         self.stop_button.config(state="disabled")
         self.status_var.set("Stopped")
+
+    def run_backtest_gui(self):
+        self.summary_text.delete(1.0, tk.END)
+        for i in self.trades_tree.get_children():
+            self.trades_tree.delete(i)
+        try:
+            start_date_str = self.start_date_var.get()
+            end_date_str = self.end_date_var.get()
+            sl_points = int(self.sl_var.get())
+            target_points = int(self.target_var.get())
+            start_date = dt.datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = dt.datetime.strptime(end_date_str, '%Y-%m-%d').date()
+
+            if not self.kite:
+                self.kite = initialize_kite()
+            if not self.instrument_token:
+                self.instrument_token = get_niftybank_index_token(self.kite)
+            if not self.instrument_token:
+                messagebox.showerror("Error", "Could not find instrument token for NIFTY BANK index.")
+                return
+
+            summary, trades = run_backtest(self.kite, self.instrument_token, start_date, end_date, sl_points, target_points)
+            if summary is None:
+                messagebox.showinfo("Backtest", "No data found for the selected period.")
+                return
+
+            summary_str = f"Total Trades: {summary['total_trades']}\n" \
+                          f"Profitable Trades: {summary['profitable_trades']}\n" \
+                          f"Loss-making Trades: {summary['loss_making_trades']}\n" \
+                          f"Total P&L: {summary['total_pnl']:.2f}"
+            self.summary_text.insert(tk.END, summary_str)
+            if trades:
+                for trade in trades:
+                    self.trades_tree.insert("", "end", values=(
+                        trade['date'].strftime('%Y-%m-%d'),
+                        trade['trade_type'],
+                        f"{trade['entry_price']:.2f}",
+                        f"{trade['exit_price']:.2f}",
+                        f"{trade['pnl']:.2f}"
+                    ))
+        except (ValueError, TypeError) as e:
+            messagebox.showerror("Error", f"Invalid input: {e}")
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred during backtesting: {e}")
 
 if __name__ == "__main__":
     app = TradingApp()
